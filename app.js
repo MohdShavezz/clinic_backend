@@ -20,11 +20,17 @@ const allowedOrigins = new Set(
     .filter(Boolean)
 );
 
-let databaseError = null;
-const databaseReady = dbConn().catch((error) => {
-  databaseError = error;
-  console.error("Unable to initialize PostgreSQL:", error);
-});
+let databaseReady = null;
+const initializeDatabase = () => {
+  if (!databaseReady) {
+    databaseReady = dbConn().catch((error) => {
+      // Allow a later request to retry if Neon was unavailable during a cold start.
+      databaseReady = null;
+      throw error;
+    });
+  }
+  return databaseReady;
+};
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -38,11 +44,13 @@ app.use(cors({
 }));
 
 app.use(async (_req, res, next) => {
-  await databaseReady;
-  if (databaseError) {
+  try {
+    await initializeDatabase();
+    return next();
+  } catch (error) {
+    console.error("Unable to initialize PostgreSQL:", error);
     return res.status(503).json({ success: false, message: "Database is unavailable. Please try again later." });
   }
-  return next();
 });
 
 app.use("/api/user", userRoute);
